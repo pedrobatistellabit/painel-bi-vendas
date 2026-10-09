@@ -44,6 +44,7 @@
 
   const DATE_KEYS = ['data_lead', 'data_visita', 'data_proposta', 'data_fechamento', 'data_cadastro'];
   function save() {
+    if (window.KCloud && window.KCloud.enabled) return; // no modo equipe os dados ficam no banco, não no navegador
     try {
       localStorage.setItem(STORE_KEY, JSON.stringify(state.data));
     } catch (e) { /* armazenamento indisponível ou cheio: segue só em memória */ }
@@ -773,7 +774,13 @@
     const d = state.data;
     const el = document.getElementById('source');
     if (!d.atendimentos.length && !d.imoveis.length) { el.innerHTML = '<span class="chip">sem dados</span>'; return; }
-    el.innerHTML = (d.fonte === 'demo' ? '<span class="chip demo">demonstração</span>' : '<span class="chip">importado</span>') +
+    if (d.vazio) {
+      el.innerHTML = '<span class="chip demo">demonstração</span><span>A equipe ainda não tem dados. ' +
+        (auth.role === 'admin' ? 'Use "Importar planilhas" para enviar a primeira base.' : 'Um administrador precisa importar as planilhas.') + '</span>';
+      return;
+    }
+    const chip = { demo: '<span class="chip demo">demonstração</span>', nuvem: '<span class="chip">dados da equipe</span>' }[d.fonte] || '<span class="chip">importado</span>';
+    el.innerHTML = chip +
       '<span>Última atualização: ' + (d.atualizado_em ? d.atualizado_em.toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : '–') +
       ' · ' + fmt.int(d.atendimentos.length) + ' atendimentos · ' + fmt.int(d.imoveis.length) + ' imóveis</span>';
   }
@@ -852,47 +859,108 @@
     proprietario: 'proprietário', imovel_ref: 'referência', bairro: 'bairro', valor: 'valor', area_m2: 'área'
   };
 
-  async function importFiles(files) {
-    const log = document.getElementById('import-log');
-    const at = [], im = [];
-    const lines = [];
+  // Lê e normaliza os arquivos; devolve { atendimentos, imoveis, arquivos, linhas de log }.
+  async function parseFiles(files) {
+    const out = { atendimentos: [], imoveis: [], arquivos: { atendimentos: [], imoveis: [] }, lines: [] };
     for (const f of files) {
       try {
         const objs = await readFile(f);
-        if (!objs.length) { lines.push('✗ ' + f.name + ': nenhuma linha encontrada'); continue; }
+        if (!objs.length) { out.lines.push('✗ ' + f.name + ': nenhuma linha encontrada'); continue; }
         const kind = Model.detectKind(Object.keys(objs[0]));
         const res = kind === 'atendimentos' ? Model.normalizeAtendimentos(objs) : Model.normalizeImoveis(objs);
-        (kind === 'atendimentos' ? at : im).push.apply(kind === 'atendimentos' ? at : im, res.rows);
+        out[kind].push.apply(out[kind], res.rows);
+        out.arquivos[kind].push(f.name);
         const important = kind === 'atendimentos'
           ? ['data_lead', 'corretor', 'midia', 'data_visita', 'data_proposta', 'data_fechamento', 'valor_fechamento']
           : ['imovel_ref', 'proprietario', 'bairro', 'valor', 'area_m2'];
         const miss = important.filter(function (k) { return res.missing.indexOf(k) >= 0; }).map(function (k) { return LABELS[k] || k; });
-        lines.push('✓ ' + f.name + ': ' + fmt.int(res.rows.length) + ' linhas de ' + (kind === 'atendimentos' ? 'atendimentos' : 'imóveis') +
+        out.lines.push('✓ ' + f.name + ': ' + fmt.int(res.rows.length) + ' linhas de ' + (kind === 'atendimentos' ? 'atendimentos' : 'imóveis') +
           ' · colunas reconhecidas: ' + Object.keys(res.mapping).length + (miss.length ? '\n  sem coluna para: ' + miss.join(', ') : ''));
       } catch (e) {
-        lines.push('✗ ' + f.name + ': ' + e.message);
+        out.lines.push('✗ ' + f.name + ': ' + e.message);
       }
     }
-    if (at.length || im.length) {
+    return out;
+  }
+
+  let importing = false;
+  async function importFiles(files) {
+    if (importing || !files.length) return;
+    const log = document.getElementById('import-log');
+    importing = true;
+    log.textContent = 'Lendo ' + files.length + ' arquivo' + (files.length > 1 ? 's' : '') + '…';
+    try {
+      const p = await parseFiles(files);
+      const lines = p.lines;
+      if (!p.atendimentos.length && !p.imoveis.length) { log.textContent = lines.join('\n'); return; }
+
+      if (cloudOn()) {
+        // Uma planilha por tipo substitui a base daquele tipo para toda a equipe.
+        for (const kind of ['atendimentos', 'imoveis']) {
+          if (!p[kind].length) continue;
+          const nome = kind === 'atendimentos' ? 'atendimentos' : 'imóveis';
+          await Cloud.upload(kind, p[kind], p.arquivos[kind], function (feito, total) {
+            log.textContent = lines.join('\n') + '\nEnviando ' + nome + ': ' + fmt.int(feito) + ' de ' + fmt.int(total) + '…';
+          });
+          lines.push('↑ ' + fmt.int(p[kind].length) + ' ' + nome + ' salvos para a equipe');
+        }
+        log.textContent = lines.join('\n') + '\nAtualizando o painel…';
+        await loadCloud();
+        log.textContent = lines.join('\n') + '\nPronto. Toda a equipe já vê os dados novos.';
+        return;
+      }
+
       const keepDemo = state.data.fonte === 'demo' ? { atendimentos: [], imoveis: [] } : state.data;
       state.data = {
-        atendimentos: at.length ? at : keepDemo.atendimentos,
-        imoveis: im.length ? im : keepDemo.imoveis,
+        atendimentos: p.atendimentos.length ? p.atendimentos : keepDemo.atendimentos,
+        imoveis: p.imoveis.length ? p.imoveis : keepDemo.imoveis,
         atualizado_em: new Date(), fonte: 'importado'
       };
       save();
       renderAll();
+      log.textContent = lines.join('\n');
+    } catch (e) {
+      log.textContent += '\n✗ Não foi possível salvar: ' + e.message + '\nA base anterior continua valendo.';
+    } finally {
+      importing = false;
     }
-    log.textContent = lines.join('\n');
   }
 
   const dlg = document.getElementById('import-dialog');
-  document.getElementById('btn-import').addEventListener('click', function () { document.getElementById('import-log').textContent = ''; dlg.showModal(); });
+  const btnClear = document.getElementById('btn-clear');
+  const btnClearConfirm = document.getElementById('btn-clear-confirm');
+  document.getElementById('btn-import').addEventListener('click', function () {
+    document.getElementById('import-log').textContent = '';
+    btnClearConfirm.hidden = true;
+    btnClear.hidden = false;
+    dlg.showModal();
+  });
   document.getElementById('btn-close').addEventListener('click', function () { dlg.close(); });
-  document.getElementById('btn-clear').addEventListener('click', function () {
-    try { localStorage.removeItem(STORE_KEY); } catch (e) { /* ok */ }
-    useDemo();
-    document.getElementById('import-log').textContent = 'Dados importados removidos. A demonstração foi carregada.';
+  btnClear.addEventListener('click', function () {
+    if (!cloudOn()) {
+      try { localStorage.removeItem(STORE_KEY); } catch (e) { /* ok */ }
+      useDemo();
+      document.getElementById('import-log').textContent = 'Dados importados removidos. A demonstração foi carregada.';
+      return;
+    }
+    btnClear.hidden = true;
+    btnClearConfirm.hidden = false;
+    document.getElementById('import-log').textContent = 'Isto apaga atendimentos e carteira para toda a equipe. A lista de pessoas com acesso continua.';
+  });
+  btnClearConfirm.addEventListener('click', async function () {
+    const log = document.getElementById('import-log');
+    btnClearConfirm.disabled = true;
+    try {
+      await Cloud.clear();
+      await loadCloud();
+      log.textContent = 'Dados apagados.';
+    } catch (e) {
+      log.textContent = '✗ ' + e.message;
+    } finally {
+      btnClearConfirm.disabled = false;
+      btnClearConfirm.hidden = true;
+      btnClear.hidden = false;
+    }
   });
   document.getElementById('file-input').addEventListener('change', function (ev) { importFiles(Array.from(ev.target.files)); ev.target.value = ''; });
   const drop = document.getElementById('drop');
@@ -910,6 +978,199 @@
     useDemo();
   });
 
+  // ---------- modo equipe (Supabase) ----------
+  const Cloud = window.KCloud || { enabled: false };
+  const auth = { session: null, role: null, mode: 'entrar' };
+  function cloudOn() { return Cloud.enabled; }
+
+  async function loadCloud() {
+    const d = await Cloud.load();
+    if (!d.atendimentos.length && !d.imoveis.length) {
+      const demo = window.KDemo.generate(new Date());
+      state.data = { atendimentos: demo.atendimentos, imoveis: demo.imoveis, atualizado_em: demo.atualizado_em, fonte: 'demo', vazio: true };
+    } else {
+      state.data = { atendimentos: d.atendimentos, imoveis: d.imoveis, atualizado_em: d.atualizado_em, fonte: 'nuvem' };
+    }
+    renderAll();
+  }
+
+  function setAuthMode(mode, msg, kind) {
+    auth.mode = mode;
+    const t = {
+      entrar: ['Entre com o e-mail liberado pela sua imobiliária.', 'Entrar', 'Primeiro acesso? Criar senha'],
+      criar: ['Crie uma senha para o e-mail liberado pela sua imobiliária. Enviaremos um link de confirmação.', 'Criar senha', 'Já tenho senha. Entrar'],
+      recuperar: ['Informe seu e-mail para receber o link de troca de senha.', 'Enviar link', 'Voltar para entrar'],
+      'nova-senha': ['Escolha uma nova senha.', 'Salvar senha', 'Voltar para entrar'],
+      'sem-acesso': ['', 'Tentar de novo', 'Sair e entrar com outro e-mail']
+    }[mode];
+    document.getElementById('auth-sub').textContent = t[0];
+    document.getElementById('auth-submit').textContent = t[1];
+    document.getElementById('auth-toggle').textContent = t[2];
+    document.getElementById('auth-email-field').hidden = mode === 'nova-senha' || mode === 'sem-acesso';
+    document.getElementById('auth-password-field').hidden = mode === 'recuperar' || mode === 'sem-acesso';
+    document.getElementById('auth-forgot').hidden = mode !== 'entrar';
+    document.getElementById('auth-password').autocomplete = mode === 'entrar' ? 'current-password' : 'new-password';
+    const m = document.getElementById('auth-msg');
+    m.textContent = msg || '';
+    m.className = 'auth-msg' + (kind ? ' ' + kind : '');
+  }
+
+  function showAuth(mode, msg, kind) {
+    document.body.classList.add('auth-mode');
+    document.getElementById('auth').hidden = false;
+    setAuthMode(mode, msg, kind);
+  }
+  function hideAuth() {
+    document.body.classList.remove('auth-mode');
+    document.getElementById('auth').hidden = true;
+  }
+
+  function renderUser() {
+    const isAdmin = auth.role === 'admin';
+    const email = auth.session && auth.session.user ? auth.session.user.email : '';
+    const u = document.getElementById('user');
+    u.hidden = !email;
+    u.textContent = email ? email + (isAdmin ? ' · administrador' : ' · leitor') : '';
+    document.getElementById('btn-logout').hidden = false;
+    document.getElementById('btn-team').hidden = !isAdmin;
+    document.getElementById('btn-import').hidden = !isAdmin;
+    document.getElementById('btn-demo').hidden = true;
+    btnClear.textContent = 'Apagar dados da equipe';
+  }
+
+  async function enterApp() {
+    auth.role = await Cloud.role();
+    if (!auth.role) {
+      showAuth('sem-acesso');
+      document.getElementById('auth-sub').textContent = 'O e-mail ' + auth.session.user.email +
+        ' ainda não tem acesso a este painel. Peça a um administrador para incluí-lo em "Equipe" e depois clique em "Tentar de novo".';
+      return;
+    }
+    hideAuth();
+    renderUser();
+    await loadCloud();
+  }
+
+  document.getElementById('auth-form').addEventListener('submit', async function (ev) {
+    ev.preventDefault();
+    const email = document.getElementById('auth-email').value;
+    const password = document.getElementById('auth-password').value;
+    const btn = document.getElementById('auth-submit');
+    const m = document.getElementById('auth-msg');
+    btn.disabled = true;
+    m.className = 'auth-msg';
+    m.textContent = 'Aguarde…';
+    try {
+      if (auth.mode === 'entrar') {
+        const r = await Cloud.signIn(email, password);
+        auth.session = r.session;
+        await enterApp();
+      } else if (auth.mode === 'criar') {
+        const r = await Cloud.signUp(email, password);
+        if (r.session) { auth.session = r.session; await enterApp(); }
+        else setAuthMode('entrar', 'Enviamos um link de confirmação para ' + email.trim() + '. Clique nele e depois entre com a senha criada.', 'ok');
+      } else if (auth.mode === 'recuperar') {
+        await Cloud.resetPassword(email);
+        setAuthMode('entrar', 'Se o e-mail tiver cadastro, enviamos um link para trocar a senha.', 'ok');
+      } else if (auth.mode === 'nova-senha') {
+        await Cloud.updatePassword(password);
+        auth.session = await Cloud.session();
+        await enterApp();
+      } else if (auth.mode === 'sem-acesso') {
+        await enterApp();
+      }
+    } catch (e) {
+      m.className = 'auth-msg error';
+      m.textContent = e.message;
+    } finally {
+      btn.disabled = false;
+    }
+  });
+  document.getElementById('auth-toggle').addEventListener('click', async function () {
+    if (auth.mode === 'entrar') setAuthMode('criar');
+    else if (auth.mode === 'sem-acesso') { await Cloud.signOut(); auth.session = null; setAuthMode('entrar'); }
+    else setAuthMode('entrar');
+  });
+  document.getElementById('auth-forgot').addEventListener('click', function () { setAuthMode('recuperar'); });
+  document.getElementById('btn-logout').addEventListener('click', async function () {
+    await Cloud.signOut();
+    auth.session = null;
+    auth.role = null;
+    state.data = { atendimentos: [], imoveis: [], atualizado_em: null, fonte: '' };
+    destroyCharts();
+    showAuth('entrar');
+  });
+
+  // Equipe
+  const teamDlg = document.getElementById('team-dialog');
+  function teamMsg(text, kind) {
+    const m = document.getElementById('team-msg');
+    m.textContent = text || '';
+    m.className = 'auth-msg' + (kind ? ' ' + kind : '');
+  }
+  async function renderTeam() {
+    const el = document.getElementById('team-list');
+    try {
+      const list = await Cloud.members();
+      const me = auth.session.user.email.toLowerCase();
+      el.innerHTML = list.map(function (m) {
+        const self = m.email === me;
+        return '<div class="team-row"><span class="email">' + esc(m.email) + (self ? ' (você)' : '') + '</span>' +
+          '<select data-role="' + esc(m.email) + '" aria-label="Papel de ' + esc(m.email) + '"' + (self ? ' disabled' : '') + '>' +
+          '<option value="leitor"' + (m.papel === 'leitor' ? ' selected' : '') + '>Leitor</option>' +
+          '<option value="admin"' + (m.papel === 'admin' ? ' selected' : '') + '>Administrador</option></select>' +
+          (self ? '' : '<button class="btn" type="button" data-remove="' + esc(m.email) + '">Remover</button>') + '</div>';
+      }).join('');
+    } catch (e) { teamMsg(e.message, 'error'); }
+  }
+  document.getElementById('btn-team').addEventListener('click', function () { teamMsg(''); teamDlg.showModal(); renderTeam(); });
+  document.getElementById('team-close').addEventListener('click', function () { teamDlg.close(); });
+  document.getElementById('team-form').addEventListener('submit', async function (ev) {
+    ev.preventDefault();
+    const email = document.getElementById('team-email').value;
+    if (!/^\S+@\S+\.\S+$/.test(email.trim())) { teamMsg('Digite um e-mail válido.', 'error'); return; }
+    try {
+      await Cloud.addMember(email, document.getElementById('team-role').value);
+      document.getElementById('team-email').value = '';
+      teamMsg(email.trim().toLowerCase() + ' foi incluído. No primeiro acesso, a pessoa usa "Primeiro acesso? Criar senha".', 'ok');
+      renderTeam();
+    } catch (e) { teamMsg(e.message, 'error'); }
+  });
+  document.getElementById('team-list').addEventListener('change', async function (ev) {
+    const email = ev.target.dataset.role;
+    if (!email) return;
+    try { await Cloud.addMember(email, ev.target.value); teamMsg('Papel de ' + email + ' atualizado.', 'ok'); }
+    catch (e) { teamMsg(e.message, 'error'); renderTeam(); }
+  });
+  document.getElementById('team-list').addEventListener('click', async function (ev) {
+    const email = ev.target.dataset && ev.target.dataset.remove;
+    if (!email) return;
+    if (ev.target.dataset.confirm !== '1') {
+      ev.target.dataset.confirm = '1';
+      ev.target.textContent = 'Confirmar remoção';
+      ev.target.classList.add('danger');
+      return;
+    }
+    try { await Cloud.removeMember(email); teamMsg(email + ' não tem mais acesso.', 'ok'); renderTeam(); }
+    catch (e) { teamMsg(e.message, 'error'); }
+  });
+
+  async function startCloud() {
+    showAuth('entrar', 'Conectando…');
+    let recovery = /type=recovery/.test(location.hash);
+    Cloud.onAuthChange(function (event, session) {
+      if (event === 'PASSWORD_RECOVERY') { recovery = true; auth.session = session; showAuth('nova-senha'); }
+    });
+    try {
+      auth.session = await Cloud.session();
+      if (recovery && auth.session) { showAuth('nova-senha'); return; }
+      if (!auth.session) { setAuthMode('entrar'); return; }
+      await enterApp();
+    } catch (e) {
+      showAuth('entrar', e.message, 'error');
+    }
+  }
+
   // Tema: redesenha os gráficos quando o tema muda.
   if (window.matchMedia) {
     const mq = window.matchMedia('(prefers-color-scheme: dark)');
@@ -922,5 +1183,7 @@
   let saved = null;
   try { saved = localStorage.getItem(TAB_KEY); } catch (e) { /* opcional */ }
   state.tab = REPORTS.some(function (t) { return t.id === hash; }) ? hash : (REPORTS.some(function (t) { return t.id === saved; }) ? saved : 'funil');
-  if (load()) renderAll(); else useDemo();
+  if (cloudOn()) startCloud();
+  else if (load()) renderAll();
+  else useDemo();
 })();

@@ -10,6 +10,27 @@
 <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
+<section class="auth" id="auth" hidden>
+  <form class="auth-card" id="auth-form" novalidate>
+    <h1>Kenlo Inteligência</h1>
+    <p class="auth-sub" id="auth-sub">Entre com o e-mail liberado pela sua imobiliária.</p>
+    <div class="field" id="auth-email-field">
+      <label for="auth-email">E-mail</label>
+      <input id="auth-email" name="email" type="email" autocomplete="username" required>
+    </div>
+    <div class="field" id="auth-password-field">
+      <label for="auth-password">Senha</label>
+      <input id="auth-password" name="password" type="password" autocomplete="current-password" minlength="6" required>
+    </div>
+    <p class="auth-msg" id="auth-msg" role="status"></p>
+    <div class="auth-actions">
+      <button class="btn primary" type="submit" id="auth-submit">Entrar</button>
+      <button class="btn link" type="button" id="auth-toggle">Primeiro acesso? Criar senha</button>
+      <button class="btn link" type="button" id="auth-forgot">Esqueci a senha</button>
+    </div>
+  </form>
+</section>
+
 <header class="topbar">
   <div class="topbar-inner">
     <div class="brand">
@@ -18,8 +39,11 @@
     </div>
     <div class="source" id="source"></div>
     <div class="actions">
+      <span class="user" id="user" hidden></span>
       <button class="btn" id="btn-demo" type="button">Carregar demonstração</button>
+      <button class="btn" id="btn-team" type="button" hidden>Equipe</button>
       <button class="btn primary" id="btn-import" type="button">Importar planilhas</button>
+      <button class="btn" id="btn-logout" type="button" hidden>Sair</button>
     </div>
   </div>
   <nav class="tabs" role="tablist" id="tabs"></nav>
@@ -44,8 +68,24 @@
   <div class="import-log" id="import-log"></div>
   <div class="dialog-actions">
     <button class="btn" type="button" id="btn-clear">Limpar dados importados</button>
+    <button class="btn danger" type="button" id="btn-clear-confirm" hidden>Confirmar: apagar todos os dados</button>
     <button class="btn primary" type="button" id="btn-close">Fechar</button>
   </div>
+</dialog>
+
+<dialog id="team-dialog">
+  <h2>Equipe com acesso</h2>
+  <p class="hint">Quem estiver nesta lista entra no painel com o próprio e-mail. <strong>Administradores</strong> importam planilhas e gerenciam a equipe; <strong>leitores</strong> só visualizam.</p>
+  <form class="team-add" id="team-form" autocomplete="off">
+    <div class="field"><label for="team-email">E-mail</label><input id="team-email" type="email" required></div>
+    <div class="field"><label for="team-role">Papel</label>
+      <select id="team-role"><option value="leitor">Leitor</option><option value="admin">Administrador</option></select>
+    </div>
+    <button class="btn primary" type="submit">Adicionar</button>
+  </form>
+  <p class="auth-msg" id="team-msg" role="status"></p>
+  <div id="team-list"></div>
+  <div class="dialog-actions"><button class="btn primary" type="button" id="team-close">Fechar</button></div>
 </dialog>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
@@ -53,6 +93,9 @@
 <script src="js/model.js"></script>
 <script src="js/metrics.js"></script>
 <script src="js/demo.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="js/config.js"></script>
+<script src="js/cloud.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>
