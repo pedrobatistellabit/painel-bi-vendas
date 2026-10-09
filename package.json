@@ -1,0 +1,10 @@
+{
+  "name": "painel-bi-vendas",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Painel de BI no formato dos relatórios do Kenlo Inteligência, a partir das planilhas exportadas do Kenlo Imob.",
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "start": "python3 -m http.server 8080"
+  }
+}
