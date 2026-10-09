@@ -44,6 +44,7 @@
     if (/Email not confirmed/i.test(m)) return 'Confirme seu e-mail pelo link que enviamos antes de entrar.';
     if (/User already registered/i.test(m)) return 'Este e-mail já tem cadastro. Use "Entrar" ou "Esqueci a senha".';
     if (/Password should be at least/i.test(m)) return 'A senha precisa ter pelo menos 6 caracteres.';
+    if (/Email logins are disabled|Signups not allowed/i.test(m)) return 'O login por e-mail está desativado no servidor. Avise o administrador do painel.';
     if (/Email address not authorized/i.test(m)) return 'O servidor ainda não está configurado para enviar e-mails a este endereço. Avise o administrador (configuração de SMTP no Supabase).';
     if (/rate limit|too many/i.test(m)) return 'Muitas tentativas seguidas. Aguarde alguns minutos e tente de novo.';
     if (/Failed to fetch|NetworkError/i.test(m)) return 'Sem conexão com o servidor. Verifique a internet.';
