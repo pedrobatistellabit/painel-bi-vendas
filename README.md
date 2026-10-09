@@ -38,6 +38,15 @@ Base: os artigos da central de ajuda do Kenlo, pasta *Imob - Kenlo Inteligência
 
 Modelos com todas as colunas reconhecidas: [`data/modelo_atendimentos.csv`](data/modelo_atendimentos.csv) e [`data/modelo_imoveis.csv`](data/modelo_imoveis.csv). Os apelidos de cada coluna estão em `js/model.js` (`ATENDIMENTO_FIELDS`, `IMOVEL_FIELDS`). Se a sua exportação usa outro nome de coluna, acrescente o apelido ali.
 
+## Onde está no ar
+
+**https://painel-kenlo-batistella.lovable.app**, em modo equipe: login por e-mail e senha, base compartilhada.
+
+- **Hospedagem:** projeto *Kenlo BI Host* no Lovable (workspace *pedro projetos*). O banco é o Lovable Cloud (Supabase gerenciado), com as tabelas e regras de [`supabase/migrations`](supabase/migrations).
+- **Como a página é montada:** o Lovable serve só `public/painel/index.html` e `public/painel/config.js` (URL e chave pública do banco). Os scripts e o CSS vêm deste repositório pelo jsDelivr, fixados num commit (`cdn.jsdelivr.net/gh/pedrobatistellabit/painel-bi-vendas@<commit>/...`).
+- **Para publicar uma versão nova do código:** envie o commit para o GitHub, troque o commit nas URLs de `public/painel/index.html` no Lovable e publique.
+- **E-mails de confirmação:** enquanto não houver um domínio de e-mail configurado no Lovable (*Cloud › Emails*), os e-mails de confirmação e de troca de senha só chegam a quem é membro do workspace do Lovable.
+
 ## Modo equipe (Supabase)
 
 Sem configuração, o painel funciona no **modo local**: cada pessoa importa as planilhas no próprio navegador. Com o Supabase configurado, ele vira um painel da equipe:
